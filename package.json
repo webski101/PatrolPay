@@ -1,0 +1,22 @@
+{
+  "name": "patrolpay",
+  "version": "1.0.0",
+  "description": "PatrolPay — DePIN work-receipt settlement on BOT Chain. Devices sign work receipts; the contract verifies and pays per receipt, on-chain.",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy": "hardhat run scripts/deploy.js --network botTestnet",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "device": "node device.js",
+    "dashboard": "node dashboard.js"
+  },
+  "dependencies": {
+    "ethers": "^6.13.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "chai": "^4.5.0",
+    "hardhat": "^2.26.0"
+  }
+}

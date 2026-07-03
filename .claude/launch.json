@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["-e", "process.env.PORT='3100'; require('./dashboard.js')"],
+      "port": 3100
+    }
+  ]
+}
