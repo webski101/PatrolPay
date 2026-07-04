@@ -12,6 +12,11 @@
 // log (audit-log.jsonl): each entry embeds the previous entry's hash, so any
 // tampering breaks the chain (the dashboard verifies it).
 //
+// Truth model (fixed): the pre-flight staticCall is ADVISORY ONLY — RPC nodes
+// behind a load balancer can serve stale state (we hit this live: a stale node
+// reported InsufficientBudget right after a confirmed top-up). The on-chain
+// transaction receipt status is the sole source of truth for PAID vs REJECTED.
+//
 // Dependency note: uses `ethers` v6 for secp256k1 signing, ABI encoding and
 // tx submission. Node's built-in crypto has no keccak256 or recoverable
 // secp256k1 signatures, so hand-rolling those was not worth the hackathon
@@ -234,7 +239,10 @@ async function main() {
         signature,
       });
 
-      // Pre-flight to capture the exact contract verdict (custom error name).
+      // Pre-flight to capture the contract's likely verdict (custom error name).
+      // ADVISORY ONLY: a stale RPC node can misreport state (seen live —
+      // InsufficientBudget right after a confirmed top-up). The on-chain
+      // receipt status below is the sole source of truth.
       let verdict = "OK";
       try {
         await contract.submitReceipt.staticCall(...args);
@@ -242,27 +250,43 @@ async function main() {
         verdict = decodeRevert(contract.interface, err);
       }
 
-      if (verdict === "OK") {
-        const tx = await contract.submitReceipt(...args);
+      // Always send with a fixed gas limit (skips estimation, and ensures a
+      // genuinely invalid receipt still lands as a reverted tx on the
+      // explorer — the attack demo's public evidence).
+      let txHash = null;
+      let status = null; // 1 = success, 0 = reverted
+      let blockNumber = null;
+      try {
+        const tx = await contract.submitReceipt(...args, { gasLimit: 300000 });
+        txHash = tx.hash;
         console.log(`[#${tick}]    submitted tx ${tx.hash} — waiting for confirmation...`);
         const rcpt = await tx.wait();
-        console.log(`[#${tick}] ✅ PAID — receipt #${receipt.nonce} verified on-chain in block ${rcpt.blockNumber}`);
-        console.log(`[#${tick}]    ${EXPLORER}/tx/${tx.hash}`);
-        auditAppend({ kind: "paid", nonce: receipt.nonce.toString(), txHash: tx.hash, block: rcpt.blockNumber });
-      } else {
-        // Send it anyway with a fixed gas limit so the rejection is visible
-        // on-chain (a reverted tx on the explorer — the demo's money shot).
-        let txHash = null;
-        try {
-          const tx = await contract.submitReceipt(...args, { gasLimit: 300000 });
-          txHash = tx.hash;
-          await tx.wait();
-        } catch (err) {
-          txHash = txHash || err?.receipt?.hash || null;
+        status = rcpt.status;
+        blockNumber = rcpt.blockNumber;
+      } catch (err) {
+        // ethers v6 throws on reverted txs — the receipt rides along on the error.
+        const rcpt = err?.receipt;
+        if (rcpt) {
+          txHash = rcpt.hash ?? txHash;
+          status = rcpt.status;
+          blockNumber = rcpt.blockNumber;
+        } else if (txHash === null) {
+          throw err; // failed before broadcast (RPC down, bad nonce on relayer, etc.)
         }
+      }
+
+      if (status === 1) {
+        if (verdict !== "OK") {
+          console.log(`[#${tick}] ℹ️  pre-flight said ${verdict}, but the chain ACCEPTED the receipt — stale RPC read, trusting the chain`);
+        }
+        console.log(`[#${tick}] ✅ PAID — receipt #${receipt.nonce} verified on-chain in block ${blockNumber}`);
+        console.log(`[#${tick}]    ${EXPLORER}/tx/${txHash}`);
+        auditAppend({ kind: "paid", nonce: receipt.nonce.toString(), txHash, block: blockNumber });
+      } else {
+        const reason = verdict !== "OK" ? verdict : "reverted on-chain";
         const label = forged ? "🛑 FORGERY REJECTED" : "🛑 REJECTED";
-        console.log(`[#${tick}] ${label} — contract reverted with ${verdict}${txHash ? `\n[#${tick}]    on-chain revert: ${EXPLORER}/tx/${txHash}` : ""}`);
-        auditAppend({ kind: forged ? "forged_rejected" : "rejected", nonce: receipt.nonce.toString(), error: verdict, txHash });
+        console.log(`[#${tick}] ${label} — contract reverted with ${reason}${txHash ? `\n[#${tick}]    on-chain revert: ${EXPLORER}/tx/${txHash}` : ""}`);
+        auditAppend({ kind: forged ? "forged_rejected" : "rejected", nonce: receipt.nonce.toString(), error: reason, txHash });
       }
     } catch (err) {
       console.error(`[#${tick}] ❌ error: ${err.shortMessage || err.message}`);
