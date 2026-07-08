@@ -109,6 +109,7 @@ submitReceipt(address device, uint256 nonce, uint256 workUnits,
 // views
 expectedNonce(address device)   budget()   devices(address)
 ```
+Public tier was initially rate-limited to ~1,000 calls/day; the Renaiss team confirmed a hackathon tier of 10,000 calls/day as of [7/07/20226], which resolves the dual-source coverage gap documented above
 
 ## Tests
 
